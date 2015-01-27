@@ -1085,7 +1085,7 @@ public class AsteriskServerImpl implements AsteriskServer, ManagerEventListener
 
     private void handleOriginateEvent(OriginateResponseEvent originateEvent)
     {
-       final String traceId;
+        final String traceId;
         final OriginateCallbackData callbackData;
         final OriginateCallback cb;
         final AsteriskChannelImpl channel;
