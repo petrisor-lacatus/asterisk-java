@@ -1085,7 +1085,7 @@ public class AsteriskServerImpl implements AsteriskServer, ManagerEventListener
 
     private void handleOriginateEvent(OriginateResponseEvent originateEvent)
     {
-        final String traceId;
+       final String traceId;
         final OriginateCallbackData callbackData;
         final OriginateCallback cb;
         final AsteriskChannelImpl channel;
@@ -1128,6 +1128,12 @@ public class AsteriskServerImpl implements AsteriskServer, ManagerEventListener
                 return;
             }
 
+            if (channel.wasInState(ChannelState.UP))
+            {
+                cb.onSuccess(channel);
+                return;
+            }
+
             if (channel.wasBusy())
             {
                 cb.onBusy(channel);
@@ -1163,15 +1169,9 @@ public class AsteriskServerImpl implements AsteriskServer, ManagerEventListener
                     return;
                 }
             }
-            
-            if (channel.wasInState(ChannelState.DOWN))
-            {
-                cb.onNoAnswer(channel);
-                return;
-            }
 
-            // if nothing else matched we asume success
-            cb.onSuccess(channel);
+            // if nothing else matched we asume no answer
+            cb.onNoAnswer(channel);
         }
         catch (Throwable t)
         {
@@ -1276,5 +1276,9 @@ public class AsteriskServerImpl implements AsteriskServer, ManagerEventListener
                 }
             }
         }
+    }
+
+    public void reloadQueues() {
+        queueManager.reloadRealtime();
     }
 }

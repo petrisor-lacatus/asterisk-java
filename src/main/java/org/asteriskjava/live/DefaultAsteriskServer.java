@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.List;
 
+import org.asteriskjava.live.ManagerCommunicationException;
 import org.asteriskjava.live.internal.AsteriskServerImpl;
 import org.asteriskjava.manager.DefaultManagerConnection;
 import org.asteriskjava.manager.ManagerConnection;
@@ -312,5 +313,10 @@ public class DefaultAsteriskServer implements AsteriskServer
     public Collection<AsteriskAgent> getAgents() throws ManagerCommunicationException
     {
         return impl.getAgents();
+    }
+
+    public void reloadQueues() throws ManagerCommunicationException
+    {
+        impl.reloadQueues();
     }
 }

@@ -449,4 +449,43 @@ class QueueManager
 
         queue.removeMember(member);
     }
+
+    /**
+     * Dynamically reloads the queues by sending a QueueStatusAction
+     *
+     * !! This will only get the queues. It will not get current members or entries
+     *
+     * @throws ManagerCommunicationException
+     */
+    public void reloadRealtime() throws ManagerCommunicationException {
+        ResponseEvents re;
+
+        try
+        {
+            re = server.sendEventGeneratingAction(new QueueStatusAction());
+        }
+        catch (ManagerCommunicationException e)
+        {
+            final Throwable cause = e.getCause();
+
+            if (cause instanceof EventTimeoutException)
+            {
+                // this happens with Asterisk 1.0.x as it doesn't send a
+                // QueueStatusCompleteEvent
+                re = ((EventTimeoutException) cause).getPartialResult();
+            }
+            else
+            {
+                throw e;
+            }
+        }
+
+        for (ManagerEvent event : re.getEvents())
+        {
+            if (event instanceof QueueParamsEvent)
+            {
+                handleQueueParamsEvent((QueueParamsEvent) event);
+            }
+        }
+    }
 }
