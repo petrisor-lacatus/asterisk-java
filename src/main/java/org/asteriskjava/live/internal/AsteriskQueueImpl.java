@@ -16,13 +16,9 @@
  */
 package org.asteriskjava.live.internal;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.asteriskjava.live.AsteriskQueue;
 import org.asteriskjava.live.AsteriskQueueEntry;
@@ -39,12 +35,34 @@ import org.asteriskjava.util.LogFactory;
  */
 class AsteriskQueueImpl extends AbstractLiveObject implements AsteriskQueue
 {
+    private static int CORE_POOL_SIZE = 2;
+    // thread pool to use for processing responses service level task timers
+    private static ScheduledExecutorService serviceLevelThreadPool = Executors.newScheduledThreadPool(CORE_POOL_SIZE,
+            new ServiceLevelThreadFactory());
+
+    /**
+     * Thread factory that creates the threads for the service level thread pool
+     */
+    private static class ServiceLevelThreadFactory implements ThreadFactory {
+        private final AtomicInteger threadNumber = new AtomicInteger(1);
+
+        public Thread newThread(Runnable r) {
+            final Thread thread;
+
+            thread = new Thread(r);
+            thread.setDaemon(true);
+            thread.setName("ServiceLevelThread-" + threadNumber.getAndIncrement());
+
+            return thread;
+        }
+    }
+
     /**
      * TimerTask that monitors exceeding service levels.
      *
      * @author Patrick Breucking
      */
-    private class ServiceLevelTimerTask extends TimerTask
+    private class ServiceLevelTimerTask implements Runnable
     {
         private final AsteriskQueueEntry entry;
 
@@ -67,10 +85,9 @@ class AsteriskQueueImpl extends AbstractLiveObject implements AsteriskQueue
     private Integer serviceLevel;
     private Integer weight;
     private final ArrayList<AsteriskQueueEntryImpl> entries;
-    private final Timer timer;
     private final HashMap<String, AsteriskQueueMemberImpl> members;
     private final List<AsteriskQueueListener> listeners;
-    private final HashMap<AsteriskQueueEntry, ServiceLevelTimerTask> serviceLevelTimerTasks;
+    private final Map<AsteriskQueueEntry, Future> serviceLevelFutures;
 
     AsteriskQueueImpl(AsteriskServerImpl server, String name, Integer max,
                       String strategy, Integer serviceLevel, Integer weight)
@@ -84,13 +101,14 @@ class AsteriskQueueImpl extends AbstractLiveObject implements AsteriskQueue
         entries = new ArrayList<AsteriskQueueEntryImpl>(25);
         listeners = new ArrayList<AsteriskQueueListener>();
         members = new HashMap<String, AsteriskQueueMemberImpl>();
-        timer = new Timer("ServiceLevelTimer-" + name, true);
-        serviceLevelTimerTasks = new HashMap<AsteriskQueueEntry, ServiceLevelTimerTask>();
+        serviceLevelFutures = new ConcurrentHashMap<AsteriskQueueEntry, Future>();
     }
 
     void cancelServiceLevelTimer()
     {
-        timer.cancel();
+        for (Future serviceLevelFuture : serviceLevelFutures.values()) {
+            serviceLevelFuture.cancel(true);
+        }
     }
 
     public String getName()
@@ -181,15 +199,11 @@ class AsteriskQueueImpl extends AbstractLiveObject implements AsteriskQueue
     {
         AsteriskQueueEntryImpl qe = new AsteriskQueueEntryImpl(server, this, channel, reportedPosition, dateReceived);
 
-        long delay = serviceLevel * 1000L;
-        if (delay > 0)
+        if (serviceLevel > 0)
         {
-            ServiceLevelTimerTask timerTask = new ServiceLevelTimerTask(qe);
-            timer.schedule(timerTask, delay);
-            synchronized (serviceLevelTimerTasks)
-            {
-                serviceLevelTimerTasks.put(qe, timerTask);
-            }
+            ScheduledFuture<?> serviceLevelFuture = serviceLevelThreadPool.scheduleWithFixedDelay(
+                    new ServiceLevelTimerTask(qe), serviceLevel, serviceLevel, TimeUnit.SECONDS);
+            serviceLevelFutures.put(qe, serviceLevelFuture);
         }
 
         synchronized (entries)
@@ -225,14 +239,11 @@ class AsteriskQueueImpl extends AbstractLiveObject implements AsteriskQueue
      */
     void removeEntry(AsteriskQueueEntryImpl entry, Date dateReceived)
     {
-        synchronized (serviceLevelTimerTasks)
+        if (serviceLevelFutures.containsKey(entry))
         {
-            if (serviceLevelTimerTasks.containsKey(entry))
-            {
-                ServiceLevelTimerTask timerTask = serviceLevelTimerTasks.get(entry);
-                timerTask.cancel();
-                serviceLevelTimerTasks.remove(entry);
-            }
+            Future serviceLevelFuture = serviceLevelFutures.get(entry);
+            serviceLevelFuture.cancel(true);
+            serviceLevelFutures.remove(entry);
         }
 
         boolean changed;
@@ -443,7 +454,7 @@ class AsteriskQueueImpl extends AbstractLiveObject implements AsteriskQueue
             logger.info("Adding new member to the queue " + getName() + ": " + member.toString());
             members.put(member.getLocation(), member);
         }
-        
+
         fireMemberAdded(member);
     }
 
@@ -531,7 +542,7 @@ class AsteriskQueueImpl extends AbstractLiveObject implements AsteriskQueue
                     + member.toString());
             members.remove(member.getLocation());
         }
-        
+
         fireMemberRemoved(member);
     }
 
